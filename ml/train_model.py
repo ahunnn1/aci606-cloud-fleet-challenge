@@ -1,14 +1,44 @@
-"""Exercise 4 training starter.
+"""Ejercicio 4 - pipeline de entrenamiento reproducible.
 
-Students must complete this script. The goal is not to copy a fixed model but to
-build a reproducible training pipeline and justify the chosen model.
+Uso (desde la raíz del repo):
+    python ml/build_training_set.py --fleets 8 --samples 3000
+    python ml/train_model.py
+
+Qué hace:
+  1. EDA: distribución de clases y resumen de variables por clase.
+  2. Split train/test por fleet_id (GroupShuffleSplit): el test son flotas no vistas.
+  3. Compara 3 clasificadores con validación cruzada agrupada (solo sobre train).
+  4. Elige el mejor por F1 macro en CV, y lo evalúa UNA vez en test
+     (matriz de confusión, F1 macro, línea base de clase mayoritaria, latencia).
+  5. Reentrena con todas las flotas y guarda models/model.joblib (+ model_meta.json).
 """
+from __future__ import annotations
+
+import argparse
+import json
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
+import joblib
+import numpy as np
 import pandas as pd
+import sklearn
+from sklearn.dummy import DummyClassifier
+from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import classification_report, confusion_matrix, f1_score
+from sklearn.model_selection import GroupKFold, GroupShuffleSplit, cross_val_score
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
 
 DATA = Path("data/training.csv")
+MODEL_PATH = Path("models/model.joblib")
+META_PATH = Path("models/model_meta.json")
+REPORTS = Path("reports")
 
+# robot_id, timestamp, x e y quedan fuera a propósito: identifican robots/lugares de
+# una flota concreta y no generalizan a una flota nueva.
 FEATURES = [
     "speed",
     "battery",
@@ -18,30 +48,216 @@ FEATURES = [
     "obstacle_distance",
 ]
 TARGET = "status"
+CLASSES = ["NORMAL", "WARNING", "CRITICAL"]
+SEED = 42
+
+
+def candidates() -> dict[str, Pipeline]:
+    return {
+        "logreg": Pipeline([
+            ("scaler", StandardScaler()),
+            ("clf", LogisticRegression(max_iter=2000, class_weight="balanced")),
+        ]),
+        "random_forest": Pipeline([
+            ("clf", RandomForestClassifier(
+                n_estimators=150, min_samples_leaf=3, class_weight="balanced",
+                random_state=SEED, n_jobs=1)),
+        ]),
+        "hist_gradient_boosting": Pipeline([
+            ("clf", HistGradientBoostingClassifier(
+                class_weight="balanced", random_state=SEED)),
+        ]),
+    }
+
+
+def load_data() -> tuple[pd.DataFrame, str]:
+    if not DATA.exists():
+        raise SystemExit(
+            "No existe data/training.csv. Ejecuta: python ml/build_training_set.py"
+        )
+    df = pd.read_csv(DATA)
+    missing = [c for c in FEATURES + [TARGET] if c not in df.columns]
+    if missing:
+        raise SystemExit(f"Faltan columnas en el CSV: {missing}")
+    df = df.dropna(subset=FEATURES + [TARGET]).reset_index(drop=True)
+
+    if "fleet_id" in df.columns:
+        group_col = "fleet_id"
+    else:
+        print("AVISO: el CSV no tiene fleet_id; se agrupa por robot_id (validación más débil).")
+        group_col = "robot_id"
+    if df[group_col].nunique() < 4:
+        raise SystemExit(
+            f"Hay solo {df[group_col].nunique()} grupos en '{group_col}'. "
+            "Genera más flotas con ml/build_training_set.py --fleets 8"
+        )
+    return df, group_col
+
+
+def eda(df: pd.DataFrame, group_col: str) -> None:
+    REPORTS.mkdir(exist_ok=True)
+    dist = df[TARGET].value_counts().reindex(CLASSES).fillna(0).astype(int)
+    pct = (dist / dist.sum() * 100).round(2)
+    table = pd.DataFrame({"count": dist, "percent": pct})
+    print("\n== Distribución de clases ==")
+    print(table)
+    table.to_csv(REPORTS / "class_distribution.csv")
+
+    print(f"\n== Grupos ({group_col}): {df[group_col].nunique()} ==")
+    print(df.groupby(group_col)[TARGET].value_counts().unstack(fill_value=0))
+
+    summary = df.groupby(TARGET)[FEATURES].agg(["mean", "std"]).round(3)
+    print("\n== Media/desv. de cada variable por clase ==")
+    print(summary.T)
+    summary.to_csv(REPORTS / "feature_summary_by_class.csv")
+
+    try:  # gráficos opcionales: solo si matplotlib está instalado
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        ax = dist.plot(kind="bar", color=["#4c9f70", "#e0a030", "#c0392b"])
+        ax.set_title("Distribución de clases")
+        ax.set_ylabel("muestras")
+        plt.tight_layout()
+        plt.savefig(REPORTS / "class_distribution.png", dpi=120)
+        plt.close()
+
+        fig, axes = plt.subplots(2, 3, figsize=(12, 6))
+        for ax, feat in zip(axes.ravel(), FEATURES):
+            data = [df.loc[df[TARGET] == c, feat] for c in CLASSES]
+            ax.boxplot(data, showfliers=False)
+            ax.set_xticks(range(1, len(CLASSES) + 1), CLASSES)
+            ax.set_title(feat)
+        plt.tight_layout()
+        plt.savefig(REPORTS / "features_by_class.png", dpi=120)
+        plt.close()
+    except Exception as exc:  # los gráficos nunca deben romper el entrenamiento
+        print(f"(se omiten los gráficos del EDA: {exc})")
+
+
+def single_row_latency_ms(model: Pipeline, X: pd.DataFrame, n: int = 200) -> float:
+    """Mediana de latencia de predict_proba con una sola fila (como en /predict)."""
+    times = []
+    for i in range(n):
+        row = X.iloc[[i % len(X)]]
+        t0 = time.perf_counter()
+        model.predict_proba(row)
+        times.append((time.perf_counter() - t0) * 1000)
+    return float(np.median(times))
+
+
+def plot_confusion(cm: np.ndarray) -> None:
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        fig, ax = plt.subplots(figsize=(4.5, 4))
+        ax.imshow(cm, cmap="Blues")
+        ax.set_xticks(range(3), CLASSES, rotation=30)
+        ax.set_yticks(range(3), CLASSES)
+        ax.set_xlabel("Predicho")
+        ax.set_ylabel("Real")
+        for i in range(3):
+            for j in range(3):
+                ax.text(j, i, int(cm[i, j]), ha="center", va="center",
+                        color="white" if cm[i, j] > cm.max() / 2 else "black")
+        plt.tight_layout()
+        plt.savefig(REPORTS / "confusion_matrix.png", dpi=120)
+        plt.close()
+    except Exception as exc:
+        print(f"(se omite el gráfico de la matriz de confusión: {exc})")
 
 
 def main() -> None:
-    if not DATA.exists():
-        raise SystemExit(
-            "Training dataset not found. Run: python simulator/generate_dataset.py"
-        )
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--version", default="v1", help="model_version que reportará /predict")
+    ap.add_argument("--test-size", type=float, default=0.25)
+    args = ap.parse_args()
 
-    df = pd.read_csv(DATA)
-    print(df.head())
-    print("\nClass distribution:")
-    print(df[TARGET].value_counts())
+    df, group_col = load_data()
+    eda(df, group_col)
 
-    # TODO E4
-    # 1. Create train/test split (stratified).
-    # 2. Compare at least two classification models.
-    # 3. Report confusion matrix + macro F1.
-    # 4. Select the final model with a technical justification.
-    # 5. Save the full preprocessing+model pipeline under models/model.joblib.
-    #
-    # Important: robot_id, timestamp, x and y are intentionally NOT part of the
-    # baseline feature list. You may justify adding/removing features.
+    X, y, groups = df[FEATURES], df[TARGET], df[group_col]
 
-    print("\nTODO: implement the training pipeline for Exercise 4.")
+    # --- Split train/test por flota -------------------------------------------------
+    gss = GroupShuffleSplit(n_splits=1, test_size=args.test_size, random_state=SEED)
+    tr_idx, te_idx = next(gss.split(X, y, groups))
+    X_tr, y_tr, g_tr = X.iloc[tr_idx], y.iloc[tr_idx], groups.iloc[tr_idx]
+    X_te, y_te = X.iloc[te_idx], y.iloc[te_idx]
+    train_groups = sorted(g_tr.unique())
+    test_groups = sorted(groups.iloc[te_idx].unique())
+    print(f"\n== Split por {group_col} ==")
+    print(f"train: {len(X_tr)} filas, grupos {train_groups}")
+    print(f"test : {len(X_te)} filas, grupos {test_groups}")
+    if set(y_te.unique()) != set(CLASSES):
+        print("AVISO: el test no contiene las 3 clases; prueba otra semilla o más flotas.")
+
+    # --- Comparación con CV agrupada (solo train) ----------------------------------
+    n_splits = min(4, len(train_groups))
+    cv = GroupKFold(n_splits=n_splits)
+    models = candidates()
+    results = {}
+    print(f"\n== Comparación (GroupKFold={n_splits} sobre train, métrica F1 macro) ==")
+    for name, pipe in models.items():
+        scores = cross_val_score(pipe, X_tr, y_tr, groups=g_tr, cv=cv, scoring="f1_macro")
+        results[name] = {"cv_f1_macro_mean": float(scores.mean()), "cv_f1_macro_std": float(scores.std())}
+        print(f"{name:<24} F1 macro = {scores.mean():.4f} ± {scores.std():.4f}")
+
+    best_name = max(results, key=lambda k: results[k]["cv_f1_macro_mean"])
+    print(f"\nModelo elegido (mayor F1 macro en CV): {best_name}")
+
+    # --- Evaluación en flotas de test ----------------------------------------------
+    baseline = DummyClassifier(strategy="most_frequent").fit(X_tr, y_tr)
+    baseline_f1 = f1_score(y_te, baseline.predict(X_te), average="macro", labels=CLASSES, zero_division=0)
+
+    print("\n== Test (flotas no vistas) ==")
+    for name, pipe in models.items():
+        fitted = pipe.fit(X_tr, y_tr)
+        pred = fitted.predict(X_te)
+        results[name]["test_f1_macro"] = float(f1_score(y_te, pred, average="macro", labels=CLASSES, zero_division=0))
+        results[name]["latency_ms_single_row"] = round(single_row_latency_ms(fitted, X_te), 3)
+        print(f"{name:<24} F1 macro test = {results[name]['test_f1_macro']:.4f} | "
+              f"latencia 1 fila ≈ {results[name]['latency_ms_single_row']} ms")
+    print(f"{'baseline (mayoritaria)':<24} F1 macro test = {baseline_f1:.4f}")
+
+    best = models[best_name]  # ya ajustado sobre train en el bucle anterior
+    pred = best.predict(X_te)
+    cm = confusion_matrix(y_te, pred, labels=CLASSES)
+    print(f"\n== Modelo elegido: {best_name} ==")
+    print("Matriz de confusión (filas = real, columnas = predicho):")
+    print(pd.DataFrame(cm, index=CLASSES, columns=CLASSES))
+    print("\n" + classification_report(y_te, pred, labels=CLASSES, zero_division=0))
+    pd.DataFrame(cm, index=CLASSES, columns=CLASSES).to_csv(REPORTS / "confusion_matrix.csv")
+    plot_confusion(cm)
+
+    # --- Reentrenar con todo y guardar ---------------------------------------------
+    final = candidates()[best_name].fit(X, y)
+    MODEL_PATH.parent.mkdir(exist_ok=True)
+    joblib.dump(final, MODEL_PATH)
+
+    meta = {
+        "model_version": args.version,
+        "model_name": best_name,
+        "features": FEATURES,
+        "classes": list(final.classes_),
+        "trained_at_utc": datetime.now(timezone.utc).isoformat(),
+        "sklearn_version": sklearn.__version__,
+        "random_state": SEED,
+        "group_column": group_col,
+        "n_rows": int(len(df)),
+        "n_groups": int(groups.nunique()),
+        "test_groups": test_groups,
+        "baseline_f1_macro_test": float(baseline_f1),
+        "candidates": results,
+        "chosen_test_f1_macro": results[best_name]["test_f1_macro"],
+        "confusion_matrix_test": cm.tolist(),
+    }
+    META_PATH.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    (REPORTS / "metrics.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    print(f"\nModelo guardado en {MODEL_PATH} (versión {args.version})")
+    print(f"Metadatos en {META_PATH}; evidencia en {REPORTS}/")
 
 
 if __name__ == "__main__":
