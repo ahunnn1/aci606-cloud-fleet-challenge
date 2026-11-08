@@ -5,58 +5,230 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>ACI606 Cloud Fleet Dashboard</title>
   <style>
-    :root { font-family: Inter, system-ui, sans-serif; color-scheme: dark; }
-    body { margin: 0; background:#0d1117; color:#e6edf3; }
-    header { padding:22px 28px; border-bottom:1px solid #30363d; display:flex; justify-content:space-between; }
+    :root {
+      font-family: Inter, system-ui, sans-serif; color-scheme: dark;
+      --bg:#0d1117; --panel:#161b22; --line:#30363d; --text:#e6edf3; --muted:#8b949e; --soft:#c9d1d9;
+      --ok:#3fb950; --warn:#d29922; --crit:#f85149; --none:#8b949e; --blue:#58a6ff;
+    }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg); color:var(--text); }
+    header { padding:18px 28px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center; gap:16px; flex-wrap:wrap; }
     h1 { margin:0; font-size:22px; }
-    .tag { color:#8b949e; }
-    main { padding:28px; }
-    .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:16px; }
-    .card { border:1px solid #30363d; border-radius:14px; padding:18px; background:#161b22; }
-    .robot { font-size:20px; font-weight:700; margin-bottom:12px; }
-    .row { display:flex; justify-content:space-between; padding:5px 0; color:#c9d1d9; }
-    .bar { height:8px; background:#30363d; border-radius:99px; overflow:hidden; margin-top:7px; }
-    .fill { height:100%; background:#58a6ff; }
-    .empty { padding:40px; text-align:center; color:#8b949e; border:1px dashed #30363d; border-radius:14px; }
+    .tag { color:var(--muted); font-size:13px; }
+    .pills { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+    .pill { display:inline-flex; align-items:center; gap:7px; border:1px solid var(--line); background:var(--panel); border-radius:99px; padding:5px 12px; font-size:13px; color:var(--soft); }
+    .dot { width:9px; height:9px; border-radius:50%; background:var(--none); }
+    .dot.ok { background:var(--ok); } .dot.warn { background:var(--warn); } .dot.crit { background:var(--crit); }
+    main { padding:24px 28px 40px; }
+    .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:14px; margin-bottom:22px; }
+    .kpi { border:1px solid var(--line); border-radius:12px; padding:14px 16px; background:var(--panel); }
+    .kpi .label { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
+    .kpi .value { font-size:26px; font-weight:700; margin-top:4px; }
+    .kpi .sub { color:var(--muted); font-size:12px; margin-top:2px; }
+    .stack { display:flex; height:10px; border-radius:99px; overflow:hidden; background:var(--line); margin:10px 0 6px; }
+    .stack span { display:block; height:100%; }
+    .legend { display:flex; gap:12px; flex-wrap:wrap; font-size:12px; color:var(--soft); }
+    .legend i { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:5px; }
+    .toolbar { display:flex; justify-content:space-between; align-items:center; margin:0 0 12px; gap:12px; flex-wrap:wrap; }
+    .toolbar h2 { margin:0; font-size:16px; }
+    select { background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:6px 10px; font:inherit; font-size:13px; }
+    .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:16px; }
+    .card { border:1px solid var(--line); border-left-width:5px; border-radius:14px; padding:16px 18px; background:var(--panel); }
+    .card.NORMAL { border-left-color:var(--ok); } .card.WARNING { border-left-color:var(--warn); }
+    .card.CRITICAL { border-left-color:var(--crit); } .card.NONE { border-left-color:var(--none); }
+    .card.stale { opacity:.55; }
+    .head { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+    .robot { font-size:20px; font-weight:700; min-width:0; overflow-wrap:anywhere; }
+    .badge { flex-shrink:0; margin-left:8px; font-size:12px; font-weight:700; border-radius:99px; padding:3px 10px; color:#0d1117; background:var(--none); }
+    .badge.NORMAL { background:var(--ok); } .badge.WARNING { background:var(--warn); } .badge.CRITICAL { background:var(--crit); }
+    .conf { color:var(--muted); font-size:12px; margin:-4px 0 8px; }
+    .row { display:flex; justify-content:space-between; padding:4px 0; color:var(--soft); font-size:14px; }
+    .bar { height:8px; background:var(--line); border-radius:99px; overflow:hidden; margin:4px 0 6px; }
+    .fill { height:100%; background:var(--blue); } .fill.low { background:var(--warn); } .fill.crit { background:var(--crit); }
+    .spark { margin-top:10px; border-top:1px solid var(--line); padding-top:8px; }
+    .spark .cap { display:flex; justify-content:space-between; color:var(--muted); font-size:11px; }
+    svg { width:100%; height:46px; display:block; }
+    .empty { padding:40px; text-align:center; color:var(--muted); border:1px dashed var(--line); border-radius:14px; grid-column:1/-1; }
+    footer { padding:0 28px 28px; color:var(--muted); font-size:12px; }
   </style>
 </head>
 <body>
 <header>
-  <div><h1>Cloud Fleet Dashboard</h1><div class="tag">ACI606 · starter</div></div>
-  <div id="status" class="tag">esperando telemetría...</div>
+  <div><h1>Cloud Fleet Dashboard</h1><div class="tag" id="subtitle">ACI606 · Ejercicio 4</div></div>
+  <div class="pills">
+    <span class="pill" id="api-pill"><span class="dot"></span><span>conectando…</span></span>
+    <span class="pill" id="model-pill">modelo: –</span>
+    <span class="pill" id="uptime-pill">uptime: –</span>
+  </div>
 </header>
+
 <main>
+  <section class="kpis" id="kpis"></section>
+
+  <div class="toolbar">
+    <h2>Robots</h2>
+    <label class="tag">Gráfico histórico:
+      <select id="chart-var">
+        <option value="vibration">Vibración</option>
+        <option value="motor_temp">Temperatura motor</option>
+        <option value="motor_current">Corriente motor</option>
+        <option value="battery">Batería</option>
+        <option value="speed">Velocidad</option>
+      </select>
+    </label>
+  </div>
   <div id="cards" class="cards"></div>
 </main>
-<script>
-const cards = document.getElementById('cards');
-const statusEl = document.getElementById('status');
+<footer id="footer">Se actualiza automáticamente cada 2 s.</footer>
 
-function card(r) {
-  const battery = Math.max(0, Math.min(100, Number(r.battery)));
-  return `<div class="card">
-    <div class="robot">${r.robot_id}</div>
-    <div class="row"><span>Battery</span><span>${battery.toFixed(1)} %</span></div>
-    <div class="bar"><div class="fill" style="width:${battery}%"></div></div>
-    <div class="row"><span>Speed</span><span>${Number(r.speed).toFixed(2)}</span></div>
-    <div class="row"><span>Motor temp.</span><span>${Number(r.motor_temp).toFixed(1)} °C</span></div>
-    <div class="row"><span>Vibration</span><span>${Number(r.vibration).toFixed(2)}</span></div>
-    <div class="row"><span>Obstacle</span><span>${Number(r.obstacle_distance).toFixed(2)} m</span></div>
-  </div>`;
+<script>
+const COLORS = { NORMAL: '#3fb950', WARNING: '#d29922', CRITICAL: '#f85149', NONE: '#8b949e' };
+const SEVERITY = { CRITICAL: 0, WARNING: 1, NORMAL: 2 };
+const VAR_LABEL = { vibration: 'Vibración', motor_temp: 'Temp. motor (°C)', motor_current: 'Corriente (A)', battery: 'Batería (%)', speed: 'Velocidad' };
+const STALE_AFTER_S = 15;      // un robot sin muestras nuevas respecto al resto de la flota se marca inactivo
+const HISTORY_POINTS = 60;
+const HISTORY_EVERY_MS = 6000;
+const MAX_HISTORY_ROBOTS = 40;
+
+const el = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const num = (v, d = 2) => Number.isFinite(Number(v)) && v !== null ? Number(v).toFixed(d) : '–';
+const statusOf = r => (r.predicted_status in COLORS ? r.predicted_status : 'NONE');
+
+async function getJSON(url) {
+  const res = await fetch(url, { cache: 'no-store' });
+  if (!res.ok) throw new Error(url + ' -> ' + res.status);
+  return res.json();
+}
+
+let state = { robots: [], health: null, metrics: null, history: {}, lastHistory: 0, online: false };
+
+function fmtUptime(s) {
+  if (!Number.isFinite(s)) return '–';
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  return h ? `${h} h ${m} min` : m ? `${m} min ${Math.floor(s % 60)} s` : `${Math.floor(s)} s`;
+}
+
+function stackBar(counts) {
+  const total = ['NORMAL', 'WARNING', 'CRITICAL'].reduce((a, k) => a + (counts[k] || 0), 0);
+  if (!total) return '<div class="stack"></div><div class="legend"><span>sin datos</span></div>';
+  const seg = ['NORMAL', 'WARNING', 'CRITICAL'].map(k =>
+    `<span style="width:${((counts[k] || 0) / total) * 100}%;background:${COLORS[k]}" title="${k}: ${counts[k] || 0}"></span>`).join('');
+  const leg = ['NORMAL', 'WARNING', 'CRITICAL'].map(k =>
+    `<span><i style="background:${COLORS[k]}"></i>${k} ${counts[k] || 0}</span>`).join('');
+  return `<div class="stack">${seg}</div><div class="legend">${leg}</div>`;
+}
+
+function sparkline(series, color) {
+  if (!series || series.length < 2) return '<div class="cap">sin historial suficiente</div>';
+  const min = Math.min(...series), max = Math.max(...series), span = max - min || 1;
+  const pts = series.map((v, i) => `${(i / (series.length - 1)) * 200},${42 - ((v - min) / span) * 38}`).join(' ');
+  return `<svg viewBox="0 0 200 46" preserveAspectRatio="none" role="img" aria-label="historial">
+    <polyline fill="none" stroke="${color}" stroke-width="2" vector-effect="non-scaling-stroke" points="${pts}"/></svg>
+    <div class="cap"><span>mín ${num(min)}</span><span>máx ${num(max)}</span></div>`;
+}
+
+function renderHeader() {
+  const pill = el('api-pill');
+  let cls = 'crit', text = 'API no disponible';
+  if (state.online && state.health) {
+    const h = state.health;
+    if (h.status === 'ok') { cls = 'ok'; text = 'API operativa'; }
+    else {
+      cls = 'warn';
+      const why = [h.database !== 'ok' ? 'base de datos' : null, !(h.model && h.model.loaded) ? 'modelo' : null].filter(Boolean).join(' y ');
+      text = 'API degradada' + (why ? ` (${why})` : '');
+    }
+  }
+  pill.innerHTML = `<span class="dot ${cls}"></span><span>${esc(text)}</span>`;
+  const h = state.health, m = state.metrics;
+  el('model-pill').textContent = 'modelo: ' + (h && h.model && h.model.loaded ? `${(m && m.model_name) || ''} ${h.model.version}`.trim() : 'no cargado');
+  el('uptime-pill').textContent = 'uptime: ' + fmtUptime(h ? h.uptime_seconds : NaN);
+}
+
+function renderKpis() {
+  const robots = state.robots, m = state.metrics || {};
+  const maxTs = Math.max(0, ...robots.map(r => Number(r.timestamp) || 0));
+  const active = robots.filter(r => maxTs - Number(r.timestamp) <= STALE_AFTER_S).length;
+  const fleet = { NORMAL: 0, WARNING: 0, CRITICAL: 0 };
+  robots.forEach(r => { if (statusOf(r) in fleet) fleet[statusOf(r)]++; });
+  const lowBattery = robots.filter(r => Number(r.battery) < 20).length;
+
+  el('kpis').innerHTML = `
+    <div class="kpi"><div class="label">Robots conectados</div><div class="value">${active}<span class="tag"> / ${robots.length}</span></div>
+      <div class="sub">${lowBattery ? lowBattery + ' con batería &lt; 20 %' : 'activos respecto al total registrado'}</div></div>
+    <div class="kpi"><div class="label">Estado actual de la flota</div>${stackBar(fleet)}</div>
+    <div class="kpi"><div class="label">Predicciones acumuladas (BD)</div>${stackBar(m.predictions_by_status || {})}</div>
+    <div class="kpi"><div class="label">Registros almacenados</div><div class="value">${m.telemetry_rows_total ?? '–'}</div>
+      <div class="sub">${esc(m.persistence || '–')} · ${m.robots_total ?? '–'} robots históricos</div></div>
+    <div class="kpi"><div class="label">Latencia /predict</div>${m.prediction_p50_latency_ms != null
+      ? `<div class="value">${num(m.prediction_p50_latency_ms, 0)}<span class="tag"> ms p50</span></div>
+         <div class="sub">p95 ${num(m.prediction_p95_latency_ms, 0)} ms · modelo ${num(m.prediction_avg_inference_ms, 1)} ms</div>`
+      : `<div class="value">–</div><div class="sub">aún sin solicitudes a /predict</div>`}</div>
+    <div class="kpi"><div class="label">Solicitudes / errores</div>
+      <div class="value">${m.requests_received ?? '–'}</div>
+      <div class="sub">errores 4xx: ${m.errors_4xx ?? '–'} · 5xx: <b style="color:${(m.errors_5xx || 0) ? COLORS.CRITICAL : 'inherit'}">${m.errors_5xx ?? '–'}</b></div></div>`;
+}
+
+function renderCards() {
+  const robots = [...state.robots].sort((a, b) =>
+    (SEVERITY[statusOf(a)] ?? 3) - (SEVERITY[statusOf(b)] ?? 3) || String(a.robot_id).localeCompare(String(b.robot_id), undefined, { numeric: true }));
+  if (!robots.length) {
+    el('cards').innerHTML = '<div class="empty">Ejecuta el simulador para comenzar a recibir robots.</div>';
+    return;
+  }
+  const maxTs = Math.max(...robots.map(r => Number(r.timestamp) || 0));
+  const variable = el('chart-var').value;
+
+  el('cards').innerHTML = robots.map(r => {
+    const st = statusOf(r);
+    const battery = Math.max(0, Math.min(100, Number(r.battery) || 0));
+    const batCls = battery < 10 ? 'crit' : battery < 20 ? 'low' : '';
+    const stale = maxTs - Number(r.timestamp) > STALE_AFTER_S;
+    const series = (state.history[r.robot_id] || []).map(h => Number(h[variable])).filter(Number.isFinite);
+    const conf = r.confidence != null ? `confianza ${(Number(r.confidence) * 100).toFixed(0)} %` : 'sin predicción';
+    const when = Number.isFinite(Number(r.timestamp)) ? new Date(Number(r.timestamp) * 1000).toLocaleTimeString() : '–';
+    return `<div class="card ${st}${stale ? ' stale' : ''}">
+      <div class="head"><span class="robot">${esc(r.robot_id)}</span><span class="badge ${st}">${st === 'NONE' ? 'SIN PREDICCIÓN' : st}</span></div>
+      <div class="conf">${conf}${stale ? ' · sin señal reciente' : ''}</div>
+      <div class="row"><span>Batería</span><span>${battery.toFixed(1)} %</span></div>
+      <div class="bar"><div class="fill ${batCls}" style="width:${battery}%"></div></div>
+      <div class="row"><span>Velocidad</span><span>${num(r.speed)}</span></div>
+      <div class="row"><span>Temp. motor</span><span>${num(r.motor_temp, 1)} °C</span></div>
+      <div class="row"><span>Vibración</span><span>${num(r.vibration)}</span></div>
+      <div class="row"><span>Corriente</span><span>${num(r.motor_current)} A</span></div>
+      <div class="row"><span>Obstáculo</span><span>${num(r.obstacle_distance)} m</span></div>
+      <div class="row"><span class="tag">Última muestra</span><span class="tag">${esc(when)}</span></div>
+      <div class="spark"><div class="cap"><span>${VAR_LABEL[variable]} · últimas ${series.length || 0}</span></div>${sparkline(series, COLORS[st])}</div>
+    </div>`;
+  }).join('');
+}
+
+async function refreshHistory() {
+  const ids = state.robots.map(r => r.robot_id).slice(0, MAX_HISTORY_ROBOTS);
+  const results = await Promise.allSettled(
+    ids.map(id => getJSON(`/robots/${encodeURIComponent(id)}/history?limit=${HISTORY_POINTS}`)));
+  results.forEach((res, i) => { if (res.status === 'fulfilled') state.history[ids[i]] = res.value; });
+  state.lastHistory = Date.now();
 }
 
 async function refresh() {
-  try {
-    const res = await fetch('/robots');
-    const robots = await res.json();
-    statusEl.textContent = `${robots.length} robot(s) conectados`;
-    cards.innerHTML = robots.length ? robots.map(card).join('') : '<div class="empty">Ejecuta el simulador para comenzar a recibir robots.</div>';
-  } catch (err) {
-    statusEl.textContent = 'API no disponible';
-  }
+  const [robots, health, metrics] = await Promise.allSettled([getJSON('/robots'), getJSON('/health'), getJSON('/metrics')]);
+  state.online = health.status === 'fulfilled' || robots.status === 'fulfilled';
+  if (health.status === 'fulfilled') state.health = health.value;
+  if (metrics.status === 'fulfilled') state.metrics = metrics.value;
+  if (robots.status === 'fulfilled') state.robots = robots.value;
+  if (Date.now() - state.lastHistory > HISTORY_EVERY_MS && state.robots.length) await refreshHistory();
+
+  renderHeader();
+  renderKpis();
+  renderCards();
+  el('footer').textContent = `Se actualiza automáticamente cada 2 s · última actualización ${new Date().toLocaleTimeString()}`;
 }
+
+el('chart-var').addEventListener('change', renderCards);
 refresh();
-setInterval(refresh, 1500);
+setInterval(refresh, 2000);
 </script>
 </body>
 </html>
