@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from starlette.requests import Request
 
 from app.db import DATABASE_URL, TelemetryRow, engine, get_session, init_db
+from app.metrics import METRICS
 
 logger = logging.getLogger("fleet")
 ROOT = Path(__file__).resolve().parents[1]
@@ -82,7 +83,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="ACI606 Cloud Fleet Challenge",
-    version="0.3.0-predict",
+    version="0.4.0-metrics",
     description="Cloud Fleet Challenge API: persistent telemetry + ML inference.",
     lifespan=lifespan,
 )
@@ -93,6 +94,20 @@ async def validation_error_handler(_: Request, exc: RequestValidationError) -> J
     """422 sin devolver el valor recibido (si fuera NaN, json.dumps fallaría -> 500)."""
     errors = [{"loc": list(e["loc"]), "msg": e["msg"], "type": e["type"]} for e in exc.errors()]
     return JSONResponse(status_code=422, content={"detail": errors})
+
+
+@app.middleware("http")
+async def metrics_middleware(request: Request, call_next):
+    """Mide todas las rutas: conteos, códigos de estado y latencia (incluye las 5xx)."""
+    t0 = time.perf_counter()
+    status = 500  # si call_next lanza una excepción no controlada, se cuenta como 500
+    try:
+        response = await call_next(request)
+        status = response.status_code
+        return response
+    finally:
+        route = getattr(request.scope.get("route"), "path", None) or "unmatched"
+        METRICS.record_request(request.method, route, status, (time.perf_counter() - t0) * 1000)
 
 
 # --------------------------------------------------------------------------- esquemas
@@ -138,11 +153,6 @@ def run_inference(sample: Telemetry) -> tuple[str, float, float]:
     return MODEL.classes[idx], float(proba[idx]), elapsed_ms
 
 
-# Contador de proceso (se reinicia con el servicio; la etapa de /metrics lo amplía).
-REQUEST_COUNT = 0
-STARTED_AT = datetime.now(timezone.utc)
-
-
 # --------------------------------------------------------------------------- rutas
 @app.get("/health")
 def health() -> dict:
@@ -159,6 +169,7 @@ def health() -> dict:
         "model": {"loaded": model_ok, "version": MODEL.version, "error": MODEL.error},
         "service": "aci606-cloud-fleet",
         "version": app.version,
+        "uptime_seconds": METRICS.snapshot()["uptime_seconds"],
         "utc": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -170,8 +181,6 @@ def ingest_telemetry(sample: Telemetry, db: Session = Depends(get_session)) -> d
     Si el modelo falla, la telemetría se guarda igual con predicción vacía:
     perder datos de la flota sería peor que no tener predicción.
     """
-    global REQUEST_COUNT
-    REQUEST_COUNT += 1
     status = confidence = None
     try:
         status, confidence, _ = run_inference(sample)
@@ -220,6 +229,7 @@ def robot_history(
 def predict(req: PredictionRequest) -> PredictionResponse:
     """Inferencia pura: no escribe en la base de datos (segura bajo carga)."""
     status, confidence, ms = run_inference(req)
+    METRICS.record_inference(ms)
     return PredictionResponse(
         robot_id=req.robot_id,
         predicted_status=status,
@@ -231,17 +241,29 @@ def predict(req: PredictionRequest) -> PredictionResponse:
 
 @app.get("/metrics")
 def metrics(db: Session = Depends(get_session)) -> dict:
-    # TODO etapa 4: latencia media de /predict, errores, contadores por ruta.
+    """Métricas operacionales.
+
+    Los contadores de solicitudes/latencia/errores son del proceso (se reinician con el
+    servicio); los datos de almacenamiento vienen de la base de datos y persisten.
+    """
     total = db.scalar(select(func.count(TelemetryRow.id))) or 0
     robots = db.scalar(select(func.count(func.distinct(TelemetryRow.robot_id)))) or 0
+    by_status = dict(
+        db.execute(
+            select(TelemetryRow.predicted_status, func.count())
+            .where(TelemetryRow.predicted_status.is_not(None))
+            .group_by(TelemetryRow.predicted_status)
+        ).all()
+    )
     return {
-        "requests_received": REQUEST_COUNT,
-        "telemetry_rows_total": total,
-        "robots_total": robots,
-        "persistence": "SQLITE" if DATABASE_URL.startswith("sqlite") else "POSTGRESQL",
-        "uptime_seconds": round((datetime.now(timezone.utc) - STARTED_AT).total_seconds(), 1),
+        **METRICS.snapshot(),
         "model_loaded": MODEL.pipeline is not None,
         "model_version": MODEL.version,
+        "model_name": MODEL.name,
+        "persistence": "SQLITE" if DATABASE_URL.startswith("sqlite") else "POSTGRESQL",
+        "telemetry_rows_total": total,
+        "robots_total": robots,
+        "predictions_by_status": by_status,
     }
 
 
