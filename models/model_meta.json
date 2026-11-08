@@ -1,0 +1,65 @@
+{
+  "model_version": "v1",
+  "model_name": "logreg",
+  "features": [
+    "speed",
+    "motor_temp",
+    "vibration",
+    "motor_current"
+  ],
+  "classes": [
+    "CRITICAL",
+    "NORMAL",
+    "WARNING"
+  ],
+  "trained_at_utc": "2026-11-08T21:08:45.905966+00:00",
+  "sklearn_version": "1.9.1",
+  "random_state": 42,
+  "group_column": "fleet_id",
+  "n_rows": 27000,
+  "n_groups": 9,
+  "test_groups": [
+    "F2",
+    "F6",
+    "F8"
+  ],
+  "baseline_f1_macro_test": 0.21042759739436798,
+  "candidates": {
+    "logreg": {
+      "cv_f1_macro_mean": 0.9196190710543318,
+      "cv_f1_macro_std": 0.009829604240208588,
+      "test_f1_macro": 0.9310850837872519,
+      "latency_ms_single_row": 1.25
+    },
+    "decision_tree": {
+      "cv_f1_macro_mean": 0.9035093866317245,
+      "cv_f1_macro_std": 0.013681400209647945,
+      "test_f1_macro": 0.9188365018539885,
+      "latency_ms_single_row": 0.931
+    },
+    "knn": {
+      "cv_f1_macro_mean": 0.9178192084262813,
+      "cv_f1_macro_std": 0.013970276856042886,
+      "test_f1_macro": 0.9232941569568086,
+      "latency_ms_single_row": 1.858
+    }
+  },
+  "chosen_test_f1_macro": 0.9310850837872519,
+  "confusion_matrix_test": [
+    [
+      2426,
+      98,
+      0
+    ],
+    [
+      110,
+      2117,
+      98
+    ],
+    [
+      0,
+      272,
+      3879
+    ]
+  ]
+}

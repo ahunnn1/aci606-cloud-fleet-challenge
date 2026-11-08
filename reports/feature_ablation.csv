@@ -1,0 +1,6 @@
+variables,n_features,f1_macro_mean,f1_macro_min
+baseline_6_variables,6,0.915,0.8791
+sin_obstacle_distance,5,0.9151,0.8791
+final_4_variables,4,0.9137,0.8779
+solo_vibration_y_temp,2,0.8967,0.8393
+solo_vibration,1,0.869,0.8082

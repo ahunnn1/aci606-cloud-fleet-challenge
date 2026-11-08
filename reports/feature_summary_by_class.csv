@@ -1,0 +1,6 @@
+,speed,speed,motor_temp,motor_temp,vibration,vibration,motor_current,motor_current
+,mean,std,mean,std,mean,std,mean,std
+status,,,,,,,,
+CRITICAL,0.753,0.121,72.915,4.289,1.483,0.187,5.429,0.448
+NORMAL,0.858,0.121,51.092,4.335,0.486,0.188,4.393,0.447
+WARNING,0.807,0.12,61.249,3.434,0.95,0.147,4.864,0.43

@@ -1,0 +1,4 @@
+status,count,percent
+NORMAL,6100,22.59
+WARNING,5672,21.01
+CRITICAL,15228,56.4
