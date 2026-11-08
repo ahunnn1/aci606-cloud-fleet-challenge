@@ -21,7 +21,7 @@ def _normalize_url(url: str) -> str:
     return url
 
 
-DATABASE_URL = _normalize_url(os.environ.get("DATABASE_URL", "sqlite:///./fleet.db"))
+DATABASE_URL = _normalize_url(os.environ.get("DATABASE_URL", "postgresql://neondb_owner:npg_XD98nxbKNJko@ep-rough-mouse-b6qjeytu-pooler.c-2.sa-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"))
 
 _connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
 
