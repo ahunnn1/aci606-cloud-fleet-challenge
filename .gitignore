@@ -24,3 +24,7 @@ data/*.csv
 
 fleet.db
 receta.txt
+
+data/
+simulator/data/
+.venv-test/
