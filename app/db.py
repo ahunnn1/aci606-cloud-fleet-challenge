@@ -6,7 +6,7 @@
 """
 from __future__ import annotations
 
-DATABASE_URL = "postgresql://neondb_owner:npg_XD98nxbKNJko@ep-rough-mouse-b6qjeytu-pooler.c-2.sa-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
+
 import os
 from collections.abc import Iterator
 
