@@ -21,12 +21,20 @@ def _normalize_url(url: str) -> str:
     return url
 
 
-DATABASE_URL = _normalize_url(os.environ.get("DATABASE_URL", "postgresql://neondb_owner:npg_XD98nxbKNJko@ep-rough-mouse-b6qjeytu-pooler.c-2.sa-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"))
+DATABASE_URL = _normalize_url(os.environ.get("DATABASE_URL", "sqlite:///./fleet.db"))
 
-_connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
+if DATABASE_URL.startswith("sqlite"):
+    _engine_kwargs = {"connect_args": {"check_same_thread": False}}
+else:
+    _engine_kwargs = {
+        "connect_args": {"connect_timeout": 15},  # no colgarse si la base tarda en despertar
+        "pool_size": 5,
+        "max_overflow": 5,
+        "pool_recycle": 240,  # recicla conexiones antes de que Neon las suspenda (5 min)
+    }
 
 # pool_pre_ping=True: Neon suspende la base tras 5 min sin uso; así reconecta solo.
-engine = create_engine(DATABASE_URL, pool_pre_ping=True, connect_args=_connect_args)
+engine = create_engine(DATABASE_URL, pool_pre_ping=True, **_engine_kwargs)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
 
