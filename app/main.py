@@ -76,7 +76,15 @@ def load_model() -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    init_db()      # crea las tablas si no existen
+    # Neon puede tardar unos segundos en despertar: reintentar antes de rendirse.
+    # Si no se logra, el servicio arranca igual y /health lo reporta como "degraded".
+    for attempt in range(1, 4):
+        try:
+            init_db()  # crea las tablas si no existen
+            break
+        except Exception:
+            logger.exception("init_db falló (intento %d/3)", attempt)
+            time.sleep(3)
     load_model()   # carga models/model.joblib (o MODEL_PATH)
     yield
 
